@@ -12,6 +12,20 @@ import Profile from './pages/Profile'
 import Requests from './pages/Requests'
 import PostDetail from './pages/PostDetail'
 
+/**
+ * AuthCallback — landing page after Google OAuth redirect.
+ * Supabase processes the token in the URL hash and fires onAuthStateChange.
+ * The AuthContext listener sets the user, then PublicRoute redirects to /feed.
+ */
+function AuthCallback() {
+  return (
+    <div className="loading-screen">
+      <div className="spinner" />
+      <span>Completing sign-in…</span>
+    </div>
+  )
+}
+
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
   if (loading) return (
@@ -48,6 +62,8 @@ function AppRoutes() {
           <Route path="/register" element={
             <PublicRoute><Register /></PublicRoute>
           } />
+          {/* Google OAuth redirect lands here */}
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/feed" element={
             <ProtectedRoute><Feed /></ProtectedRoute>
           } />

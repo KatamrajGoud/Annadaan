@@ -16,7 +16,7 @@ export function AuthProvider({ children }) {
       else setLoading(false)
     })
 
-    // Listen for auth changes
+    // Listen for auth state changes (handles OAuth redirects too)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         setUser(session?.user ?? null)
@@ -51,28 +51,51 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function signUp(email, password) {
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (error) throw error
-    return data
-  }
-
-  async function signIn(email, password) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    return data
-  }
-
-  async function signInWithGoogle() {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+  /**
+   * Send a one-time password (OTP) to the given email.
+   * Supabase will create the user automatically on first sign-in.
+   */
+  async function sendOtp(email) {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
       options: {
-        redirectTo: window.location.origin,
+        shouldCreateUser: true, // auto-create account if it doesn't exist
       },
     })
     if (error) throw error
   }
 
+  /**
+   * Verify the OTP token entered by the user.
+   * Returns the session data on success.
+   */
+  async function verifyOtp(email, token) {
+    const { data, error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    })
+    if (error) throw error
+    return data
+  }
+
+  /**
+   * Initiate Google OAuth sign-in.
+   * On success, Supabase redirects to /auth/callback.
+   */
+  async function signInWithGoogle() {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    })
+    if (error) throw error
+  }
+
+  /**
+   * Sign the current user out and clear the session.
+   */
   async function signOut() {
     const { error } = await supabase.auth.signOut()
     if (error) throw error
@@ -94,8 +117,8 @@ export function AuthProvider({ children }) {
     user,
     profile,
     loading,
-    signUp,
-    signIn,
+    sendOtp,
+    verifyOtp,
     signInWithGoogle,
     signOut,
     updateProfile,
