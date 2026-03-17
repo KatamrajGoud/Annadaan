@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { Mail, ArrowRight, ShieldCheck, Loader2, ChevronLeft } from 'lucide-react'
+import {
+  Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck,
+  Loader2, ChevronLeft, AlertCircle, CheckCircle2
+} from 'lucide-react'
 
-// ─── Google SVG ──────────────────────────────────────────────────────────────
+// ─── Google SVG ───────────────────────────────────────────────────────────────
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -15,7 +18,7 @@ function GoogleIcon() {
   )
 }
 
-// ─── OTP Input: 6 individual digit boxes ──────────────────────────────────────
+// ─── 6-box OTP Input ──────────────────────────────────────────────────────────
 function OtpInput({ value, onChange, disabled }) {
   const inputs = useRef([])
   const digits = value.split('')
@@ -23,31 +26,20 @@ function OtpInput({ value, onChange, disabled }) {
   function handleKey(e, idx) {
     if (e.key === 'Backspace') {
       if (digits[idx]) {
-        // clear current box
-        const next = digits.slice()
-        next[idx] = ''
-        onChange(next.join(''))
+        const next = [...digits]; next[idx] = ''; onChange(next.join(''))
       } else if (idx > 0) {
-        // move to previous box and clear it
-        const next = digits.slice()
-        next[idx - 1] = ''
-        onChange(next.join(''))
+        const next = [...digits]; next[idx - 1] = ''; onChange(next.join(''))
         inputs.current[idx - 1]?.focus()
       }
       e.preventDefault()
-    } else if (e.key === 'ArrowLeft' && idx > 0) {
-      inputs.current[idx - 1]?.focus()
-    } else if (e.key === 'ArrowRight' && idx < 5) {
-      inputs.current[idx + 1]?.focus()
-    }
+    } else if (e.key === 'ArrowLeft' && idx > 0) inputs.current[idx - 1]?.focus()
+    else if (e.key === 'ArrowRight' && idx < 5) inputs.current[idx + 1]?.focus()
   }
 
   function handleInput(e, idx) {
     const char = e.target.value.replace(/\D/g, '').slice(-1)
     if (!char) return
-    const next = digits.slice()
-    next[idx] = char
-    onChange(next.join(''))
+    const next = [...digits]; next[idx] = char; onChange(next.join(''))
     if (idx < 5) inputs.current[idx + 1]?.focus()
   }
 
@@ -55,19 +47,16 @@ function OtpInput({ value, onChange, disabled }) {
     e.preventDefault()
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
     onChange(pasted.padEnd(6, '').slice(0, 6))
-    const focusIdx = Math.min(pasted.length, 5)
-    inputs.current[focusIdx]?.focus()
+    inputs.current[Math.min(pasted.length, 5)]?.focus()
   }
 
-  // auto-focus first empty box
   useEffect(() => {
     const firstEmpty = digits.findIndex(d => !d)
-    const focusIdx = firstEmpty === -1 ? 5 : firstEmpty
-    inputs.current[focusIdx]?.focus()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    inputs.current[firstEmpty === -1 ? 5 : firstEmpty]?.focus()
+  }, []) // eslint-disable-line
 
   return (
-    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', margin: '1.5rem 0' }}>
+    <div className="otp-grid">
       {Array.from({ length: 6 }).map((_, idx) => (
         <input
           key={idx}
@@ -81,104 +70,122 @@ function OtpInput({ value, onChange, disabled }) {
           onPaste={handlePaste}
           disabled={disabled}
           aria-label={`OTP digit ${idx + 1}`}
-          style={{
-            width: '3rem',
-            height: '3.5rem',
-            textAlign: 'center',
-            fontSize: '1.5rem',
-            fontWeight: 700,
-            borderRadius: '0.75rem',
-            border: '2px solid var(--color-border)',
-            background: 'var(--color-surface)',
-            color: 'var(--color-text)',
-            outline: 'none',
-            transition: 'border-color 0.2s',
-            caretColor: 'transparent',
-          }}
-          onFocus={e => (e.target.style.borderColor = 'var(--color-primary)')}
-          onBlur={e => (e.target.style.borderColor = digits[idx] ? 'var(--color-primary)' : 'var(--color-border)')}
+          className={`otp-box${digits[idx] ? ' filled' : ''}`}
         />
       ))}
     </div>
   )
 }
 
+// ─── Alert Banner ─────────────────────────────────────────────────────────────
+function Alert({ type, children }) {
+  if (!children) return null
+  const isError = type === 'error'
+  return (
+    <div className={`auth-alert auth-alert--${type}`} role={isError ? 'alert' : 'status'}>
+      {isError
+        ? <AlertCircle size={16} style={{ flexShrink: 0 }} />
+        : <CheckCircle2 size={16} style={{ flexShrink: 0 }} />}
+      <span>{children}</span>
+    </div>
+  )
+}
+
 // ─── Main Login Component ─────────────────────────────────────────────────────
 export default function Login() {
-  const { sendOtp, verifyOtp, signInWithGoogle } = useAuth()
+  const { signInWithPassword, sendOtp, verifyOtp, signInWithGoogle } = useAuth()
   const navigate = useNavigate()
 
-  const [step, setStep] = useState('email') // 'email' | 'otp'
-  const [email, setEmail] = useState('')
+  const [tab, setTab] = useState('password')        // 'password' | 'otp'
+  const [otpStep, setOtpStep] = useState('email')   // 'email' | 'code'
+
+  // Password tab state
+  const [pwForm, setPwForm] = useState({ email: '', password: '', remember: false })
+  const [showPw, setShowPw] = useState(false)
+  const [pwLoading, setPwLoading] = useState(false)
+  const [pwError, setPwError] = useState('')
+
+  // OTP tab state
+  const [otpEmail, setOtpEmail] = useState('')
   const [otp, setOtp] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [otpLoading, setOtpLoading] = useState(false)
+  const [otpError, setOtpError] = useState('')
+  const [otpInfo, setOtpInfo] = useState('')
+
+  // Google
   const [googleLoading, setGoogleLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [info, setInfo] = useState('')
 
-  // ── Send OTP ────────────────────────────────────────────────────────────────
-  async function handleSendOtp(e) {
+  // ── Password Login ──────────────────────────────────────────────────────────
+  async function handlePasswordLogin(e) {
     e.preventDefault()
-    if (!email.trim()) return
-    setError('')
-    setLoading(true)
+    setPwError('')
+    const { email, password } = pwForm
+    if (!email.trim() || !password) { setPwError('Please enter your email and password.'); return }
+    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRx.test(email.trim())) { setPwError('Please enter a valid email address.'); return }
+    setPwLoading(true)
     try {
-      await sendOtp(email.trim())
-      setInfo(`We sent a 6-digit code to ${email.trim()}. Check your inbox (and spam folder).`)
-      setOtp('')
-      setStep('otp')
-    } catch (err) {
-      setError(err.message || 'Failed to send OTP. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Verify OTP ──────────────────────────────────────────────────────────────
-  async function handleVerifyOtp(e) {
-    e.preventDefault()
-    if (otp.length !== 6) {
-      setError('Please enter the complete 6-digit code.')
-      return
-    }
-    setError('')
-    setLoading(true)
-    try {
-      await verifyOtp(email.trim(), otp)
+      await signInWithPassword(email.trim(), password)
       navigate('/feed', { replace: true })
     } catch (err) {
-      setError(err.message || 'Invalid or expired code. Please try again.')
+      const msg = err.message || ''
+      if (msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('credentials')) {
+        setPwError('Incorrect email or password. Please try again.')
+      } else if (msg.toLowerCase().includes('email not confirmed')) {
+        setPwError('Please verify your email address before signing in. Check your inbox.')
+      } else {
+        setPwError(msg || 'Login failed. Please try again.')
+      }
     } finally {
-      setLoading(false)
+      setPwLoading(false)
     }
   }
 
-  // ── Google Sign-In ──────────────────────────────────────────────────────────
+  // ── OTP Send ────────────────────────────────────────────────────────────────
+  async function handleSendOtp(e) {
+    e.preventDefault()
+    setOtpError(''); setOtpLoading(true)
+    try {
+      await sendOtp(otpEmail.trim())
+      setOtpInfo(`We sent a 6-digit code to ${otpEmail.trim()}. Check your inbox and spam folder.`)
+      setOtp(''); setOtpStep('code')
+    } catch (err) {
+      setOtpError(err.message || 'Failed to send OTP. Please try again.')
+    } finally { setOtpLoading(false) }
+  }
+
+  // ── OTP Verify ──────────────────────────────────────────────────────────────
+  async function handleVerifyOtp(e) {
+    e.preventDefault()
+    if (otp.length !== 6) { setOtpError('Please enter the complete 6-digit code.'); return }
+    setOtpError(''); setOtpLoading(true)
+    try {
+      await verifyOtp(otpEmail.trim(), otp)
+      navigate('/feed', { replace: true })
+    } catch (err) {
+      setOtpError(err.message || 'Invalid or expired code. Please try again.')
+    } finally { setOtpLoading(false) }
+  }
+
+  // ── OTP Resend ──────────────────────────────────────────────────────────────
+  async function handleResend() {
+    setOtpError(''); setOtpInfo(''); setOtp(''); setOtpLoading(true)
+    try {
+      await sendOtp(otpEmail.trim())
+      setOtpInfo('A new code was sent to your email.')
+    } catch (err) {
+      setOtpError(err.message || 'Failed to resend code.')
+    } finally { setOtpLoading(false) }
+  }
+
+  // ── Google ──────────────────────────────────────────────────────────────────
   async function handleGoogle() {
-    setError('')
-    setGoogleLoading(true)
+    setPwError(''); setGoogleLoading(true)
     try {
       await signInWithGoogle()
-      // page will redirect — no need to setLoading(false)
     } catch (err) {
-      setError(err.message || 'Google sign-in failed. Please try again.')
+      setPwError(err.message || 'Google sign-in failed. Please try again.')
       setGoogleLoading(false)
-    }
-  }
-
-  // ── Resend OTP ──────────────────────────────────────────────────────────────
-  async function handleResend() {
-    setError('')
-    setInfo('')
-    setOtp('')
-    setLoading(true)
-    try {
-      await sendOtp(email.trim())
-      setInfo('A new code was sent to your email.')
-    } catch (err) {
-      setError(err.message || 'Failed to resend OTP.')
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -189,175 +196,204 @@ export default function Login() {
         {/* ── Header ── */}
         <div className="auth-header">
           <div className="auth-logo">🍱</div>
-          {step === 'email' ? (
-            <>
-              <h1 className="auth-title">Welcome to Annadaan</h1>
-              <p className="auth-subtitle">Sign in or create an account to start sharing food</p>
-            </>
-          ) : (
-            <>
-              <h1 className="auth-title">Check your email</h1>
-              <p className="auth-subtitle">Enter the 6-digit code we sent you</p>
-            </>
-          )}
+          <h1 className="auth-title">Welcome back</h1>
+          <p className="auth-subtitle">Sign in to your Annadaan account</p>
         </div>
 
-        {/* ── Alert ── */}
-        {error && (
-          <div className="alert alert-error" role="alert">
-            {error}
-          </div>
-        )}
-        {info && !error && (
-          <div className="alert alert-success" role="status" style={{
-            background: 'rgba(16,185,129,0.1)',
-            border: '1px solid rgba(16,185,129,0.3)',
-            color: '#059669',
-            borderRadius: '0.75rem',
-            padding: '0.875rem 1rem',
-            fontSize: '0.875rem',
-            marginBottom: '1.25rem',
-          }}>
-            {info}
-          </div>
-        )}
+        {/* ── Google Button ── */}
+        <button
+          id="btn-google-signin"
+          className="btn-google"
+          onClick={handleGoogle}
+          disabled={googleLoading || pwLoading || otpLoading}
+          type="button"
+        >
+          {googleLoading
+            ? <Loader2 size={18} className="spin-icon" />
+            : <GoogleIcon />}
+          {googleLoading ? 'Connecting to Google…' : 'Continue with Google'}
+        </button>
 
-        {/* ════════════════════ STEP 1: Email Entry ════════════════════ */}
-        {step === 'email' && (
-          <>
-            {/* Google Sign-In */}
-            <button
-              id="btn-google-signin"
-              className="btn-google"
-              onClick={handleGoogle}
-              disabled={googleLoading || loading}
-              type="button"
-            >
-              {googleLoading
-                ? <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                : <GoogleIcon />
-              }
-              {googleLoading ? 'Connecting to Google…' : 'Continue with Google'}
-            </button>
+        <div className="auth-divider"><span>or sign in with email</span></div>
 
-            {/* Divider */}
-            <div className="divider">OR</div>
+        {/* ── Tabs ── */}
+        <div className="auth-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={tab === 'password'}
+            className={`auth-tab${tab === 'password' ? ' active' : ''}`}
+            onClick={() => { setTab('password'); setPwError('') }}
+          >🔑 Password</button>
+          <button
+            role="tab"
+            aria-selected={tab === 'otp'}
+            className={`auth-tab${tab === 'otp' ? ' active' : ''}`}
+            onClick={() => { setTab('otp'); setOtpError(''); setOtpInfo(''); setOtpStep('email') }}
+          >📧 Email OTP</button>
+        </div>
 
-            {/* Email OTP Form */}
-            <form onSubmit={handleSendOtp} noValidate>
-              <div className="form-group">
-                <label htmlFor="login-email" className="form-label">
-                  Email address
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <Mail
-                    size={16}
-                    style={{
-                      position: 'absolute', left: '1rem', top: '50%',
-                      transform: 'translateY(-50%)',
-                      color: 'var(--color-text-muted)', pointerEvents: 'none',
-                    }}
-                  />
-                  <input
-                    id="login-email"
-                    type="email"
-                    className="form-input"
-                    style={{ paddingLeft: '2.75rem' }}
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={e => { setEmail(e.target.value); setError('') }}
-                    required
-                    autoComplete="email"
-                    disabled={loading}
-                  />
-                </div>
+        {/* ════════════ TAB: Password ════════════ */}
+        {tab === 'password' && (
+          <form onSubmit={handlePasswordLogin} noValidate>
+            <Alert type="error">{pwError}</Alert>
+
+            <div className="form-group">
+              <label htmlFor="login-email" className="form-label">Email address</label>
+              <div className="input-wrap">
+                <Mail size={16} className="input-icon" />
+                <input
+                  id="login-email"
+                  type="email"
+                  className="form-input with-icon"
+                  placeholder="you@example.com"
+                  value={pwForm.email}
+                  onChange={e => { setPwForm(f => ({ ...f, email: e.target.value })); setPwError('') }}
+                  autoComplete="email"
+                  disabled={pwLoading}
+                  required
+                />
               </div>
+            </div>
 
-              <button
-                id="btn-send-otp"
-                type="submit"
-                className="btn btn-primary btn-full btn-lg"
-                disabled={loading || !email.trim()}
-              >
-                {loading
-                  ? <><div className="spinner" style={{ width: 18, height: 18 }} /> Sending code…</>
-                  : <><ArrowRight size={17} /> Send OTP to Email</>
-                }
-              </button>
-            </form>
-          </>
+            <div className="form-group">
+              <div className="form-label-row">
+                <label htmlFor="login-password" className="form-label">Password</label>
+                <Link to="/forgot-password" className="form-label-link">Forgot password?</Link>
+              </div>
+              <div className="input-wrap">
+                <Lock size={16} className="input-icon" />
+                <input
+                  id="login-password"
+                  type={showPw ? 'text' : 'password'}
+                  className="form-input with-icon with-icon-right"
+                  placeholder="Your password"
+                  value={pwForm.password}
+                  onChange={e => { setPwForm(f => ({ ...f, password: e.target.value })); setPwError('') }}
+                  autoComplete="current-password"
+                  disabled={pwLoading}
+                  required
+                />
+                <button
+                  type="button"
+                  className="input-icon-right"
+                  onClick={() => setShowPw(v => !v)}
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                >
+                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Remember Me */}
+            <label className="remember-me">
+              <input
+                type="checkbox"
+                className="remember-checkbox"
+                checked={pwForm.remember}
+                onChange={e => setPwForm(f => ({ ...f, remember: e.target.checked }))}
+              />
+              <span>Remember me for 30 days</span>
+            </label>
+
+            <button
+              id="btn-password-login"
+              type="submit"
+              className="btn btn-primary btn-full btn-lg"
+              disabled={pwLoading}
+            >
+              {pwLoading
+                ? <><div className="spinner" style={{ width: 18, height: 18 }} /> Signing in…</>
+                : <><ArrowRight size={17} /> Sign In</>}
+            </button>
+          </form>
         )}
 
-        {/* ════════════════════ STEP 2: OTP Verification ════════════════════ */}
-        {step === 'otp' && (
+        {/* ════════════ TAB: OTP Step 1 — Email ════════════ */}
+        {tab === 'otp' && otpStep === 'email' && (
+          <form onSubmit={handleSendOtp} noValidate>
+            <Alert type="error">{otpError}</Alert>
+            <div className="form-group">
+              <label htmlFor="otp-email" className="form-label">Email address</label>
+              <div className="input-wrap">
+                <Mail size={16} className="input-icon" />
+                <input
+                  id="otp-email"
+                  type="email"
+                  className="form-input with-icon"
+                  placeholder="you@example.com"
+                  value={otpEmail}
+                  onChange={e => { setOtpEmail(e.target.value); setOtpError('') }}
+                  autoComplete="email"
+                  disabled={otpLoading}
+                  required
+                />
+              </div>
+            </div>
+            <button
+              id="btn-send-otp"
+              type="submit"
+              className="btn btn-primary btn-full btn-lg"
+              disabled={otpLoading || !otpEmail.trim()}
+            >
+              {otpLoading
+                ? <><div className="spinner" style={{ width: 18, height: 18 }} /> Sending…</>
+                : <><ArrowRight size={17} /> Send 6-digit Code</>}
+            </button>
+          </form>
+        )}
+
+        {/* ════════════ TAB: OTP Step 2 — Code ════════════ */}
+        {tab === 'otp' && otpStep === 'code' && (
           <>
-            {/* Back button */}
             <button
               type="button"
-              onClick={() => { setStep('email'); setError(''); setInfo(''); setOtp('') }}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                background: 'none', border: 'none', color: 'var(--color-text-secondary)',
-                fontSize: '0.875rem', cursor: 'pointer', padding: '0 0 0.5rem 0',
-                marginBottom: '0.5rem',
-              }}
+              className="btn-back"
+              onClick={() => { setOtpStep('email'); setOtpError(''); setOtpInfo(''); setOtp('') }}
             >
               <ChevronLeft size={15} /> Back
             </button>
 
-            {/* Sent-to label */}
-            <p style={{
-              textAlign: 'center', fontSize: '0.9rem',
-              color: 'var(--color-text-secondary)', marginBottom: '0.25rem',
-            }}>
-              Code sent to <strong style={{ color: 'var(--color-text)' }}>{email}</strong>
+            <Alert type="success">{otpInfo}</Alert>
+            <Alert type="error">{otpError}</Alert>
+
+            <p className="otp-sent-to">
+              Code sent to <strong>{otpEmail}</strong>
             </p>
 
-            {/* 6-box OTP input */}
-            <OtpInput value={otp} onChange={setOtp} disabled={loading} />
+            <OtpInput value={otp} onChange={setOtp} disabled={otpLoading} />
 
             <form onSubmit={handleVerifyOtp} noValidate>
               <button
                 id="btn-verify-otp"
                 type="submit"
                 className="btn btn-primary btn-full btn-lg"
-                disabled={loading || otp.length !== 6}
+                disabled={otpLoading || otp.length !== 6}
               >
-                {loading
+                {otpLoading
                   ? <><div className="spinner" style={{ width: 18, height: 18 }} /> Verifying…</>
-                  : <><ShieldCheck size={17} /> Verify &amp; Sign In</>
-                }
+                  : <><ShieldCheck size={17} /> Verify &amp; Sign In</>}
               </button>
             </form>
 
-            {/* Resend */}
-            <p style={{
-              textAlign: 'center', marginTop: '1.25rem',
-              fontSize: '0.875rem', color: 'var(--color-text-secondary)',
-            }}>
+            <p className="resend-row">
               Didn't get it?{' '}
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={loading}
-                style={{
-                  background: 'none', border: 'none',
-                  color: 'var(--color-primary)', fontWeight: 600,
-                  cursor: 'pointer', padding: 0, fontSize: 'inherit',
-                }}
-              >
+              <button type="button" className="link-btn" onClick={handleResend} disabled={otpLoading}>
                 Resend code
               </button>
             </p>
           </>
         )}
 
-        {/* Footer note */}
-        <p style={{
-          textAlign: 'center', marginTop: '1.75rem',
-          fontSize: '0.8rem', color: 'var(--color-text-muted)',
-        }}>
-          By continuing, you agree to our Terms of Service and Privacy Policy.
+        {/* ── Footer ── */}
+        <p className="auth-footer-text">
+          Don't have an account?{' '}
+          <Link to="/register" className="link-btn link-btn--accent">Create one free</Link>
+        </p>
+
+        <p className="auth-terms">
+          By signing in you agree to our{' '}
+          <a href="#" className="link-btn">Terms of Service</a> and{' '}
+          <a href="#" className="link-btn">Privacy Policy</a>.
         </p>
       </div>
     </div>

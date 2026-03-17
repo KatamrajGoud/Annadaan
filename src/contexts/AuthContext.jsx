@@ -16,7 +16,7 @@ export function AuthProvider({ children }) {
       else setLoading(false)
     })
 
-    // Listen for auth state changes (handles OAuth redirects too)
+    // Listen for auth state changes (handles OAuth + password recovery redirects)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         setUser(session?.user ?? null)
@@ -51,24 +51,49 @@ export function AuthProvider({ children }) {
     }
   }
 
-  /**
-   * Send a one-time password (OTP) to the given email.
-   * Supabase will create the user automatically on first sign-in.
-   */
+  // ── Email + Password Registration ───────────────────────────────────────────
+  async function signUp(email, password, name) {
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: { full_name: name },           // stored in auth.users metadata
+        emailRedirectTo: `${window.location.origin}/login`,
+      },
+    })
+    if (error) throw error
+
+    // Upsert profile row (id may not exist yet if email unconfirmed)
+    if (data.user) {
+      await supabase.from('users').upsert({
+        id: data.user.id,
+        name: name.trim(),
+        email: email.trim(),
+      })
+    }
+    return data
+  }
+
+  // ── Email + Password Login ──────────────────────────────────────────────────
+  async function signInWithPassword(email, password) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
+    if (error) throw error
+    return data
+  }
+
+  // ── Send OTP (magic link / email OTP) ──────────────────────────────────────
   async function sendOtp(email) {
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        shouldCreateUser: true, // auto-create account if it doesn't exist
-      },
+      options: { shouldCreateUser: true },
     })
     if (error) throw error
   }
 
-  /**
-   * Verify the OTP token entered by the user.
-   * Returns the session data on success.
-   */
+  // ── Verify OTP ──────────────────────────────────────────────────────────────
   async function verifyOtp(email, token) {
     const { data, error } = await supabase.auth.verifyOtp({
       email,
@@ -79,10 +104,7 @@ export function AuthProvider({ children }) {
     return data
   }
 
-  /**
-   * Initiate Google OAuth sign-in.
-   * On success, Supabase redirects to /auth/callback.
-   */
+  // ── Google OAuth ─────────────────────────────────────────────────────────────
   async function signInWithGoogle() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -93,14 +115,28 @@ export function AuthProvider({ children }) {
     if (error) throw error
   }
 
-  /**
-   * Sign the current user out and clear the session.
-   */
+  // ── Forgot Password — sends reset email ────────────────────────────────────
+  async function sendPasswordReset(email) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    if (error) throw error
+  }
+
+  // ── Reset Password — used on /reset-password page after token redirect ────
+  async function updatePassword(newPassword) {
+    const { data, error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) throw error
+    return data
+  }
+
+  // ── Sign Out ─────────────────────────────────────────────────────────────────
   async function signOut() {
     const { error } = await supabase.auth.signOut()
     if (error) throw error
   }
 
+  // ── Update Profile ───────────────────────────────────────────────────────────
   async function updateProfile(updates) {
     if (!user) throw new Error('Not authenticated')
     const { data, error } = await supabase
@@ -117,10 +153,14 @@ export function AuthProvider({ children }) {
     user,
     profile,
     loading,
+    signUp,
+    signInWithPassword,
     sendOtp,
     verifyOtp,
     signInWithGoogle,
     signOut,
+    sendPasswordReset,
+    updatePassword,
     updateProfile,
     refreshProfile: () => user && fetchProfile(user.id),
   }
